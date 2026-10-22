@@ -220,23 +220,29 @@ class ApiService {
       String qrCode,
       ) async {
     try {
+      final cleanCode = qrCode.trim();
       final response = await http.post(
         Uri.parse('$baseUrl/Pairing/connect'),
         headers: _commonHeaders,
         body: jsonEncode({
-          'qrCode': qrCode.trim(),
+          'qrCode': cleanCode,
+          'pairingCode': cleanCode,
+          'code': cleanCode,
         }),
       ).timeout(_timeout);
 
       final data = _parseResponse(response);
 
       if (data['status'] == true) {
-        final token = data['deviceToken'];
+        final token = data['deviceToken'] ??
+            data['token'] ??
+            data['childDeviceToken'] ??
+            (data['data'] is Map ? data['data']['deviceToken'] ?? data['data']['token'] : null);
 
         if (token is! String || token.isEmpty) {
           return {
             'status': false,
-            'message': 'Server khong tra ve deviceToken',
+            'message': data['message'] ?? 'Server khong tra ve deviceToken',
           };
         }
 
@@ -247,18 +253,20 @@ class ApiService {
           token,
         );
 
-        final deviceId = data['deviceId'];
+        final dynamic rawDeviceId = data['deviceId'] ??
+            data['childDeviceId'] ??
+            data['id'] ??
+            (data['data'] is Map ? data['data']['deviceId'] ?? data['data']['id'] : null);
 
-        if (deviceId is int) {
-          await prefs.setInt(
-            'child_device_id',
-            deviceId,
-          );
-        } else if (deviceId is num) {
-          await prefs.setInt(
-            'child_device_id',
-            deviceId.toInt(),
-          );
+        if (rawDeviceId is int) {
+          await prefs.setInt('child_device_id', rawDeviceId);
+        } else if (rawDeviceId is num) {
+          await prefs.setInt('child_device_id', rawDeviceId.toInt());
+        } else if (rawDeviceId is String) {
+          final parsedId = int.tryParse(rawDeviceId);
+          if (parsedId != null) {
+            await prefs.setInt('child_device_id', parsedId);
+          }
         }
       }
 

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../services/api_service.dart';
@@ -19,7 +20,21 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
     final List<Barcode> barcodes = capture.barcodes;
     if (barcodes.isEmpty || barcodes.first.rawValue == null) return;
 
-    final String code = barcodes.first.rawValue!;
+    String code = barcodes.first.rawValue!.trim();
+
+    // Nếu barcode chứa chuỗi JSON, tự động trích xuất thuộc tính qrCode / pairingCode
+    if (code.startsWith('{') && code.endsWith('}')) {
+      try {
+        final parsedJson = jsonDecode(code);
+        if (parsedJson is Map) {
+          code = (parsedJson['qrCode'] ??
+                  parsedJson['pairingCode'] ??
+                  parsedJson['code'] ??
+                  code)
+              .toString();
+        }
+      } catch (_) {}
+    }
 
     // 1. Lập tức dừng quét và bật trạng thái đang xử lý
     setState(() => _isProcessing = true);
