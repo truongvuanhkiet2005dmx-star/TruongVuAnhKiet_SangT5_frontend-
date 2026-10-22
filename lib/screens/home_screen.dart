@@ -92,18 +92,18 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // --- 1. CHỨC NĂNG CHILD (CẢM BIẾN & TELEMETRY) ---
+  // --- 1. CHỨC NĂNG CHILD (CẢM BIẾN & TELEMETRY TỰ BẢO VỆ LỖI STREAM) ---
   Future<void> _startChildSensors() async {
     if (_childDeviceId == null || _childDeviceToken == null || _childDeviceToken!.isEmpty) return;
 
-    // GPS Location
+    // 1. GPS Location với try-catch an toàn
     try {
       LocationPermission perm = await Geolocator.checkPermission();
       if (perm == LocationPermission.denied) {
         perm = await Geolocator.requestPermission();
       }
       if (perm == LocationPermission.whileInUse || perm == LocationPermission.always) {
-        Position pos = await Geolocator.getCurrentPosition();
+        Position pos = await Geolocator.getCurrentPosition().timeout(const Duration(seconds: 10));
         if (mounted) {
           setState(() {
             _lat = pos.latitude;
@@ -111,27 +111,47 @@ class _HomeScreenState extends State<HomeScreen> {
           });
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('Không thể lấy vị trí GPS: $e');
+    }
 
-    // Microphone (Độ ồn)
+    // 2. Microphone (Độ ồn) - Bắt lỗi Async Stream onError tránh văng app
     try {
-      _noiseSub = NoiseMeter().noise.listen((NoiseReading reading) {
-        if (mounted) {
-          setState(() => _decibel = reading.meanDecibel);
-        }
-      });
-    } catch (_) {}
+      _noiseSub?.cancel();
+      _noiseSub = NoiseMeter().noise.listen(
+        (NoiseReading reading) {
+          if (mounted) {
+            setState(() => _decibel = reading.meanDecibel);
+          }
+        },
+        onError: (Object error) {
+          debugPrint('Lỗi Stream Microphone (NoiseMeter): $error');
+        },
+      );
+    } catch (e) {
+      debugPrint('Không thể khởi tạo Microphone: $e');
+    }
 
-    // Gia tốc kế (Té ngã khi thay đổi vận tốc > 25 m/s²)
-    _accelSub = userAccelerometerEventStream().listen((event) {
-      if (event.x.abs() > 25 || event.y.abs() > 25 || event.z.abs() > 25) {
-        if (mounted) {
-          setState(() => _isFallDetected = true);
-        }
-      }
-    });
+    // 3. Gia tốc kế - Bắt lỗi Async Stream onError tránh văng app
+    try {
+      _accelSub?.cancel();
+      _accelSub = userAccelerometerEventStream().listen(
+        (event) {
+          if (event.x.abs() > 25 || event.y.abs() > 25 || event.z.abs() > 25) {
+            if (mounted) {
+              setState(() => _isFallDetected = true);
+            }
+          }
+        },
+        onError: (Object error) {
+          debugPrint('Lỗi Stream Gia tốc kế: $error');
+        },
+      );
+    } catch (e) {
+      debugPrint('Không thể khởi tạo Gia tốc kế: $e');
+    }
 
-    // Định kỳ 5 giây gửi Telemetry bằng X-Child-Token
+    // 4. Định kỳ 5 giây gửi Telemetry bằng X-Child-Token
     _telemetryTimer?.cancel();
     _telemetryTimer = Timer.periodic(const Duration(seconds: 5), (_) => _syncChildTelemetry());
   }
@@ -256,8 +276,12 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // Đăng xuất Parent (Xóa jwt_token và app_mode của Parent; KHÔNG xóa child_device_token hay child_device_id)
+  // Đăng xuất Parent (Xóa jwt_token và app_mode của Parent)
   Future<void> _handleLogoutParent() async {
+    _telemetryTimer?.cancel();
+    _noiseSub?.cancel();
+    _accelSub?.cancel();
+
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('jwt_token');
     await prefs.remove('app_mode');
@@ -265,6 +289,26 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
 
     _redirectToLogin();
+  }
+
+  // Đổi vai trò Child về Màn hình chọn vai trò
+  Future<void> _handleResetChildMode() async {
+    _telemetryTimer?.cancel();
+    _noiseSub?.cancel();
+    _accelSub?.cancel();
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('app_mode');
+    await prefs.remove('child_device_token');
+    await prefs.remove('child_device_id');
+
+    if (!mounted) return;
+
+    setState(() {
+      _currentMode = null;
+      _childDeviceToken = null;
+      _childDeviceId = null;
+    });
   }
 
   // Đặt chế độ Child và lưu SharedPreferences
@@ -302,6 +346,34 @@ class _HomeScreenState extends State<HomeScreen> {
         appBar: AppBar(
           title: const Text('Thiết Bị Trẻ Em (Child)'),
           centerTitle: true,
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.swap_horiz),
+              tooltip: 'Đổi vai trò / Đăng xuất Child',
+              onPressed: () {
+                showDialog(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    title: const Text('Chuyển vai trò thiết bị'),
+                    content: const Text('Bạn có muốn thoát chế độ Trẻ em để về màn hình Chọn vai trò ban đầu?'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        child: const Text('Hủy'),
+                      ),
+                      ElevatedButton(
+                        onPressed: () {
+                          Navigator.pop(ctx);
+                          _handleResetChildMode();
+                        },
+                        child: const Text('ĐỒNG Ý'),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ],
         ),
         body: _buildChildView(),
       );
