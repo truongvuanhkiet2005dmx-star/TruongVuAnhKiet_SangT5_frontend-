@@ -1,38 +1,48 @@
 
 import 'dart:convert';
+
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ApiService {
-  // Dia chi Backend hien tai
+  // Backend ASP.NET Core qua ngrok
   static const String baseUrl =
-      'https://littlebluepen95.conveyor.cloud/api';
+      'https://encroach-perfume-clasp.ngrok-free.dev/api';
 
-  // Header danh cho Parent (JWT)
+  static const Duration _timeout = Duration(seconds: 20);
+
+  // Header chung cho ngrok
+  static Map<String, String> get _commonHeaders => {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+    'ngrok-skip-browser-warning': 'true',
+  };
+
+  // Header dành cho Parent (JWT)
   static Future<Map<String, String>> _getHeaders() async {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('jwt_token');
 
     return {
-      'Content-Type': 'application/json',
+      ..._commonHeaders,
       if (token != null && token.isNotEmpty)
         'Authorization': 'Bearer $token',
     };
   }
 
-  // Header danh cho Child (Device Token)
+  // Header dành cho Child (Device Token)
   static Future<Map<String, String>> _getChildHeaders() async {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('child_device_token');
 
     return {
-      'Content-Type': 'application/json',
+      ..._commonHeaders,
       if (token != null && token.isNotEmpty)
         'X-Child-Token': token,
     };
   }
 
-  // Xu ly ket qua API
+  // Xử lý kết quả API
   static Map<String, dynamic> _parseResponse(
       http.Response response,
       ) {
@@ -96,10 +106,14 @@ class ApiService {
       }
 
       return {
-        'status': response.statusCode >= 200 &&
+        'status':
+        response.statusCode >= 200 &&
             response.statusCode < 300,
         'statusCode': response.statusCode,
-        'message': response.body,
+        'message': body is String
+            ? body
+            : response.body,
+        'data': body,
       };
     } catch (_) {
       return {
@@ -111,7 +125,7 @@ class ApiService {
     }
   }
 
-  // 1. Dang ky tai khoan
+  // 1. Đăng ký tài khoản Parent
   static Future<Map<String, dynamic>> register(
       String username,
       String email,
@@ -125,8 +139,11 @@ class ApiService {
           'username': username,
           'email': email,
           'password': password,
+          'initials': username.isNotEmpty
+              ? username.substring(0, 1).toUpperCase()
+              : '',
         }),
-      ).timeout(const Duration(seconds: 20));
+      ).timeout(_timeout);
 
       return _parseResponse(response);
     } catch (e) {
@@ -137,7 +154,7 @@ class ApiService {
     }
   }
 
-  // 2. Dang nhap Parent
+  // 2. Đăng nhập Parent
   static Future<Map<String, dynamic>> login(
       String username,
       String password,
@@ -145,12 +162,12 @@ class ApiService {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/Authenticate/login'),
-        headers: await _getHeaders(),
+        headers: _commonHeaders,
         body: jsonEncode({
           'username': username,
           'password': password,
         }),
-      ).timeout(const Duration(seconds: 20));
+      ).timeout(_timeout);
 
       return _parseResponse(response);
     } catch (e) {
@@ -161,7 +178,7 @@ class ApiService {
     }
   }
 
-  // 3. Xac thuc OTP
+  // 3. Xác thực OTP
   static Future<Map<String, dynamic>> verifyOtp(
       String username,
       String otpCode,
@@ -169,17 +186,18 @@ class ApiService {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/Authenticate/verify-otp'),
-        headers: await _getHeaders(),
+        headers: _commonHeaders,
         body: jsonEncode({
           'username': username,
           'otpCode': otpCode,
         }),
-      ).timeout(const Duration(seconds: 20));
+      ).timeout(_timeout);
 
       final data = _parseResponse(response);
 
       if (data['status'] == true &&
-          data['token'] is String) {
+          data['token'] is String &&
+          (data['token'] as String).isNotEmpty) {
         final prefs = await SharedPreferences.getInstance();
 
         await prefs.setString(
@@ -197,20 +215,18 @@ class ApiService {
     }
   }
 
-  // 4. Child quet QR de ghep noi
+  // 4. Child quét QR để ghép nối
   static Future<Map<String, dynamic>> pairDeviceByQr(
       String qrCode,
       ) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/Pairing/connect'),
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: _commonHeaders,
         body: jsonEncode({
           'qrCode': qrCode.trim(),
         }),
-      ).timeout(const Duration(seconds: 20));
+      ).timeout(_timeout);
 
       final data = _parseResponse(response);
 
@@ -238,6 +254,11 @@ class ApiService {
             'child_device_id',
             deviceId,
           );
+        } else if (deviceId is num) {
+          await prefs.setInt(
+            'child_device_id',
+            deviceId.toInt(),
+          );
         }
       }
 
@@ -250,7 +271,7 @@ class ApiService {
     }
   }
 
-  // 5. Child gui GPS, tieng on, te nga va SOS
+  // 5. Child gửi GPS, tiếng ồn, té ngã và SOS
   static Future<Map<String, dynamic>> sendTelemetry({
     required int deviceId,
     required double latitude,
@@ -272,7 +293,7 @@ class ApiService {
           'isFallDetected': isFallDetected,
           'isSOSActive': isSosActive,
         }),
-      ).timeout(const Duration(seconds: 20));
+      ).timeout(_timeout);
 
       return _parseResponse(response);
     } catch (e) {
@@ -283,8 +304,7 @@ class ApiService {
     }
   }
 
-  // 6. Child xin gia han 5 phut
-  // appName phai trung voi ten ung dung da gioi han
+  // 6. Child xin gia hạn thời gian
   static Future<Map<String, dynamic>> requestExtension(
       int deviceId, {
         String appName = 'YouTube',
@@ -301,7 +321,7 @@ class ApiService {
           'requestedMinutes': requestedMinutes,
           'reason': reason,
         }),
-      ).timeout(const Duration(seconds: 20));
+      ).timeout(_timeout);
 
       return _parseResponse(response);
     } catch (e) {
@@ -312,13 +332,15 @@ class ApiService {
     }
   }
 
-  // 7. Parent tao ma QR ghep noi cho thiet bi tre
-  static Future<Map<String, dynamic>> createPairingQr(int deviceId) async {
+  // 7. Parent tạo mã QR ghép nối
+  static Future<Map<String, dynamic>> createPairingQr(
+      int deviceId,
+      ) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/Pairing/create/$deviceId'),
         headers: await _getHeaders(),
-      ).timeout(const Duration(seconds: 20));
+      ).timeout(_timeout);
 
       return _parseResponse(response);
     } catch (e) {
@@ -329,13 +351,13 @@ class ApiService {
     }
   }
 
-  // 8. Parent lay danh sach thiet bi tre em
+  // 8. Parent lấy danh sách thiết bị trẻ em
   static Future<Map<String, dynamic>> getChildDevices() async {
     try {
       final response = await http.get(
         Uri.parse('$baseUrl/ChildManagement/devices'),
         headers: await _getHeaders(),
-      ).timeout(const Duration(seconds: 20));
+      ).timeout(_timeout);
 
       return _parseResponse(response);
     } catch (e) {
@@ -346,13 +368,17 @@ class ApiService {
     }
   }
 
-  // 9. Parent xem telemetry va trang thai cua thiet bi tre
-  static Future<Map<String, dynamic>> getDeviceTelemetry(int deviceId) async {
+  // 9. Parent xem telemetry của thiết bị trẻ
+  static Future<Map<String, dynamic>> getDeviceTelemetry(
+      int deviceId,
+      ) async {
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl/SafetyHistory/parent/telemetry/$deviceId'),
+        Uri.parse(
+          '$baseUrl/SafetyHistory/parent/telemetry/$deviceId',
+        ),
         headers: await _getHeaders(),
-      ).timeout(const Duration(seconds: 20));
+      ).timeout(_timeout);
 
       return _parseResponse(response);
     } catch (e) {
@@ -361,5 +387,118 @@ class ApiService {
         'message': 'Loi lay du lieu giam sat: $e',
       };
     }
+  }
+
+  // 10. Parent khóa thiết bị
+  static Future<Map<String, dynamic>> lockDevice(
+      int deviceId,
+      ) async {
+    try {
+      final response = await http.put(
+        Uri.parse('$baseUrl/DeviceControl/$deviceId/lock'),
+        headers: await _getHeaders(),
+      ).timeout(_timeout);
+
+      return _parseResponse(response);
+    } catch (e) {
+      return {
+        'status': false,
+        'message': 'Loi khoa thiet bi: $e',
+      };
+    }
+  }
+
+  // 11. Parent mở khóa thiết bị
+  static Future<Map<String, dynamic>> unlockDevice(
+      int deviceId,
+      ) async {
+    try {
+      final response = await http.put(
+        Uri.parse('$baseUrl/DeviceControl/$deviceId/unlock'),
+        headers: await _getHeaders(),
+      ).timeout(_timeout);
+
+      return _parseResponse(response);
+    } catch (e) {
+      return {
+        'status': false,
+        'message': 'Loi mo khoa thiet bi: $e',
+      };
+    }
+  }
+
+  // 12. Child kiểm tra trạng thái khóa
+  static Future<Map<String, dynamic>> getChildLockStatus(
+      int deviceId,
+      ) async {
+    try {
+      final response = await http.get(
+        Uri.parse(
+          '$baseUrl/DeviceControl/child/$deviceId/status',
+        ),
+        headers: await _getChildHeaders(),
+      ).timeout(_timeout);
+
+      return _parseResponse(response);
+    } catch (e) {
+      return {
+        'status': false,
+        'message': 'Loi kiem tra trang thai: $e',
+      };
+    }
+  }
+
+  // 13. Parent xem thống kê sử dụng ứng dụng
+  static Future<Map<String, dynamic>> getAppUsage(
+      int deviceId, {
+        int days = 7,
+      }) async {
+    try {
+      final response = await http.get(
+        Uri.parse(
+          '$baseUrl/AppUsage/parent/$deviceId?days=$days',
+        ),
+        headers: await _getHeaders(),
+      ).timeout(_timeout);
+
+      return _parseResponse(response);
+    } catch (e) {
+      return {
+        'status': false,
+        'message': 'Loi lay thong ke su dung: $e',
+      };
+    }
+  }
+
+  // 14. Child báo cáo thời gian sử dụng
+  static Future<Map<String, dynamic>> reportAppUsage({
+    required int deviceId,
+    required String appName,
+    required int usedMinutes,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/AppUsage/child/report'),
+        headers: await _getChildHeaders(),
+        body: jsonEncode({
+          'childDeviceId': deviceId,
+          'appName': appName,
+          'usedMinutes': usedMinutes,
+        }),
+      ).timeout(_timeout);
+
+      return _parseResponse(response);
+    } catch (e) {
+      return {
+        'status': false,
+        'message': 'Loi bao cao su dung: $e',
+      };
+    }
+  }
+
+  // 15. Đăng xuất Parent
+  static Future<void> logout() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('jwt_token');
   }
 }
