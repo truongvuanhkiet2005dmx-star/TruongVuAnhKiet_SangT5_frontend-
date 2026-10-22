@@ -66,6 +66,57 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
     }
   }
 
+  // Phương thức cho phép nhập mã ghép đôi thủ công (Hữu ích khi test trên Máy ảo không có Camera)
+  Future<void> _showManualInputDialog() async {
+    final controller = TextEditingController();
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+
+    final manualCode = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Nhập mã ghép đôi thủ công'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            hintText: 'Nhập hoặc dán mã QR / Pairing code...',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Hủy'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('XÁC NHẬN'),
+          ),
+        ],
+      ),
+    );
+
+    if (manualCode == null || manualCode.isEmpty) return;
+
+    setState(() => _isProcessing = true);
+
+    final result = await ApiService.pairDeviceByQr(manualCode);
+
+    if (!mounted) return;
+
+    if (result['status'] == true) {
+      messenger.showSnackBar(
+        SnackBar(content: Text(result['message'] ?? 'Ghép đôi thành công!')),
+      );
+      navigator.pop(true);
+    } else {
+      messenger.showSnackBar(
+        SnackBar(content: Text(result['message'] ?? 'Mã ghép đôi không hợp lệ')),
+      );
+      setState(() => _isProcessing = false);
+    }
+  }
+
   @override
   void dispose() {
     _controller.dispose();
@@ -78,14 +129,51 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
       appBar: AppBar(
         title: const Text('Quét QR Ghép Đôi'),
         centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.edit_note),
+            tooltip: 'Nhập mã ghép đôi thủ công',
+            onPressed: _showManualInputDialog,
+          ),
+        ],
       ),
       body: Stack(
         alignment: Alignment.center,
         children: [
-          // 1. Khung MobileScanner toàn màn hình
+          // 1. Khung MobileScanner toàn màn hình với errorBuilder xử lý khi không có Camera
           MobileScanner(
             controller: _controller,
             onDetect: _onDetect,
+            errorBuilder: (context, error) {
+              return Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24.0),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.camera_alt_outlined, size: 80, color: Colors.orange),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Camera máy ảo không khả dụng',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Bạn có thể nhập hoặc dán mã ghép đôi thủ công bằng nút bấm bên dưới.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.grey),
+                      ),
+                      const SizedBox(height: 24),
+                      ElevatedButton.icon(
+                        onPressed: _showManualInputDialog,
+                        icon: const Icon(Icons.edit),
+                        label: const Text('Nhập Mã Thủ Công'),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
           ),
 
           // Khung vuông hướng dẫn quét

@@ -25,7 +25,8 @@
         android:name="android.app.Application"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true"
-        tools:targetApi="m"
+        android:enableOnBackInvokedCallback="true"
+        tools:targetApi="33"
         tools:ignore="MissingApplicationIcon">
         <activity
             android:name="com.example.truong_vu_anh_kiet_de1_app.MainActivity"
