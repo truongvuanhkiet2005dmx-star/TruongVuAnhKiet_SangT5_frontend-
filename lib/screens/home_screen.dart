@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:noise_meter/noise_meter.dart';
 import 'package:sensors_plus/sensors_plus.dart';
@@ -262,7 +263,19 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
           actions: [
-            TextButton(
+            TextButton.icon(
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: qrCode.toString()));
+                messenger.showSnackBar(
+                  const SnackBar(
+                    content: Text('Đã sao chép mã ghép đôi vào bộ nhớ tạm!'),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.copy, size: 18),
+              label: const Text('Sao chép mã'),
+            ),
+            ElevatedButton(
               onPressed: () => Navigator.pop(context),
               child: const Text('Đóng'),
             ),
