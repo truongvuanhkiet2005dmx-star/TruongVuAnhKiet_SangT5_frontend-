@@ -325,8 +325,6 @@ class ApiService {
             headers: ApiConfig.commonHeaders,
             body: jsonEncode({
               'qrCode': cleanCode,
-              'pairingCode': cleanCode,
-              'code': cleanCode,
             }),
           )
           .timeout(ApiConfig.timeout);

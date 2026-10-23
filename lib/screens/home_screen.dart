@@ -174,7 +174,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _lockStatusTimer = Timer.periodic(const Duration(seconds: 10), (_) => _checkChildLockStatus());
   }
 
-  // Gửi Telemetry với cờ kiểm soát trùng lặp
+  // Gửi Telemetry với cờ kiểm soát trùng lặp & bảo toàn cờ té ngã
   Future<void> _syncChildTelemetry() async {
     if (_childDeviceId == null || _childDeviceToken == null || _childDeviceToken!.isEmpty) return;
     if (_isTelemetrySending) return; // Chống gửi request chồng lặp
@@ -200,15 +200,15 @@ class _HomeScreenState extends State<HomeScreen> {
     if (result['status'] == true) {
       setState(() {
         _alertMessage = result['alertMessage'] ?? result['message'] ?? 'Trạng thái bình thường';
+        // Chỉ reset cờ té ngã khi Backend đã nhận thành công!
+        if (_isFallDetected) {
+          _isFallDetected = false;
+        }
       });
-    }
-
-    if (_isFallDetected) {
-      setState(() => _isFallDetected = false);
     }
   }
 
-  // Kiểm tra trạng thái khóa bằng X-Child-Token
+  // Kiểm tra trạng thái khóa đọc đúng isInstantLocked từ Backend
   Future<void> _checkChildLockStatus() async {
     if (_childDeviceId == null || _childDeviceToken == null || _childDeviceToken!.isEmpty) return;
 
@@ -217,11 +217,11 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
 
     if (res['status'] == true) {
-      final isLocked = res['isLocked'] ?? res['isInstantLocked'] ?? false;
-      final msg = res['message'] ?? res['lockMessage'] ?? 'Ứng dụng đang bị giới hạn thời gian';
+      final isLocked = res['isInstantLocked'] ?? res['isLocked'] ?? false;
+      final msg = res['lockMessage'] ?? res['message'] ?? 'Ứng dụng đang bị giới hạn thời gian';
 
       setState(() {
-        _isLocked = isLocked;
+        _isLocked = isLocked == true;
         _lockMessage = msg.toString();
       });
     }
@@ -271,7 +271,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // Form Thêm thiết bị trẻ (CREATE)
+  // Form Thêm thiết bị trẻ (CREATE) có SingleChildScrollView & kiểm tra tuổi 1-17
   Future<void> _handleCreateChildDevice() async {
     final nameCtrl = TextEditingController();
     final deviceCtrl = TextEditingController();
@@ -282,25 +282,27 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Thêm Thiết Bị Trẻ Em Mới'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameCtrl,
-              decoration: const InputDecoration(labelText: 'Tên của Trẻ (vd: Bé An)', border: OutlineInputBorder()),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: deviceCtrl,
-              decoration: const InputDecoration(labelText: 'Tên Thiết Bị (vd: Samsung Galaxy)', border: OutlineInputBorder()),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: ageCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Tuổi của Trẻ', border: OutlineInputBorder()),
-            ),
-          ],
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameCtrl,
+                decoration: const InputDecoration(labelText: 'Tên của Trẻ (vd: Bé An)', border: OutlineInputBorder()),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: deviceCtrl,
+                decoration: const InputDecoration(labelText: 'Tên Thiết Bị (vd: Samsung Galaxy)', border: OutlineInputBorder()),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: ageCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Tuổi của Trẻ (1 - 17)', border: OutlineInputBorder()),
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
@@ -309,13 +311,22 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
 
-    if (shouldCreate == true && mounted) {
-      final childName = nameCtrl.text.trim();
-      final deviceName = deviceCtrl.text.trim();
-      final age = int.tryParse(ageCtrl.text.trim()) ?? 10;
+    final childName = nameCtrl.text.trim();
+    final deviceName = deviceCtrl.text.trim();
+    final age = int.tryParse(ageCtrl.text.trim());
 
+    nameCtrl.dispose();
+    deviceCtrl.dispose();
+    ageCtrl.dispose();
+
+    if (shouldCreate == true && mounted) {
       if (childName.isEmpty || deviceName.isEmpty) {
         messenger.showSnackBar(const SnackBar(content: Text('Vui lòng nhập đầy đủ tên trẻ và tên thiết bị')));
+        return;
+      }
+
+      if (age == null || age < 1 || age > 17) {
+        messenger.showSnackBar(const SnackBar(content: Text('Tuổi của trẻ phải từ 1 đến 17 tuổi')));
         return;
       }
 
@@ -329,7 +340,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // Form Sửa thông tin thiết bị trẻ (UPDATE)
   Future<void> _handleEditChildDevice(Map<String, dynamic> device) async {
-    final deviceId = device['id'] ?? device['deviceId'] ?? 1;
+    final dynamic rawId = device['id'] ?? device['deviceId'];
+    if (rawId == null) return;
+    final int deviceId = rawId is int ? rawId : int.parse(rawId.toString());
+
     final nameCtrl = TextEditingController(text: (device['childName'] ?? device['name'] ?? '').toString());
     final deviceCtrl = TextEditingController(text: (device['deviceName'] ?? '').toString());
     final ageCtrl = TextEditingController(text: (device['age'] ?? 10).toString());
@@ -339,25 +353,27 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text('Chỉnh Sửa Thiết Bị #$deviceId'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameCtrl,
-              decoration: const InputDecoration(labelText: 'Tên của Trẻ', border: OutlineInputBorder()),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: deviceCtrl,
-              decoration: const InputDecoration(labelText: 'Tên Thiết Bị', border: OutlineInputBorder()),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: ageCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Tuổi của Trẻ', border: OutlineInputBorder()),
-            ),
-          ],
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameCtrl,
+                decoration: const InputDecoration(labelText: 'Tên của Trẻ', border: OutlineInputBorder()),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: deviceCtrl,
+                decoration: const InputDecoration(labelText: 'Tên Thiết Bị', border: OutlineInputBorder()),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: ageCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Tuổi của Trẻ (1 - 17)', border: OutlineInputBorder()),
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Hủy')),
@@ -366,12 +382,26 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
 
-    if (shouldUpdate == true && mounted) {
-      final childName = nameCtrl.text.trim();
-      final deviceName = deviceCtrl.text.trim();
-      final age = int.tryParse(ageCtrl.text.trim()) ?? 10;
+    final childName = nameCtrl.text.trim();
+    final deviceName = deviceCtrl.text.trim();
+    final age = int.tryParse(ageCtrl.text.trim());
 
-      final res = await ApiService.updateChildDevice(id: deviceId as int, childName: childName, deviceName: deviceName, age: age);
+    nameCtrl.dispose();
+    deviceCtrl.dispose();
+    ageCtrl.dispose();
+
+    if (shouldUpdate == true && mounted) {
+      if (childName.isEmpty || deviceName.isEmpty) {
+        messenger.showSnackBar(const SnackBar(content: Text('Vui lòng nhập đầy đủ tên trẻ và tên thiết bị')));
+        return;
+      }
+
+      if (age == null || age < 1 || age > 17) {
+        messenger.showSnackBar(const SnackBar(content: Text('Tuổi của trẻ phải từ 1 đến 17 tuổi')));
+        return;
+      }
+
+      final res = await ApiService.updateChildDevice(id: deviceId, childName: childName, deviceName: deviceName, age: age);
       if (!mounted) return;
 
       messenger.showSnackBar(SnackBar(content: Text(res['message'] ?? 'Cập nhật thiết bị thành công!')));
@@ -408,7 +438,35 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // Tạo mã QR ghép đôi thật hiển thị bằng QrImageView
+  // Parent Khóa thiết bị với SnackBar phản hồi chính xác từ Backend
+  Future<void> _handleLockDevice(int deviceId) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final res = await ApiService.lockDevice(deviceId);
+
+    if (!mounted) return;
+
+    if (res['status'] == true) {
+      messenger.showSnackBar(SnackBar(content: Text(res['message'] ?? 'Đã khóa thiết bị!')));
+    } else {
+      messenger.showSnackBar(SnackBar(content: Text(res['message'] ?? 'Khóa thiết bị thất bại')));
+    }
+  }
+
+  // Parent Mở khóa thiết bị với SnackBar phản hồi chính xác từ Backend
+  Future<void> _handleUnlockDevice(int deviceId) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final res = await ApiService.unlockDevice(deviceId);
+
+    if (!mounted) return;
+
+    if (res['status'] == true) {
+      messenger.showSnackBar(SnackBar(content: Text(res['message'] ?? 'Đã mở khóa thiết bị!')));
+    } else {
+      messenger.showSnackBar(SnackBar(content: Text(res['message'] ?? 'Mở khóa thiết bị thất bại')));
+    }
+  }
+
+  // Tạo mã QR ghép đôi thật hiển thị bằng QrImageView (Báo lỗi nếu Backend không trả về qrCode)
   Future<void> _handleCreatePairingQr(int deviceId) async {
     final messenger = ScaffoldMessenger.of(context);
     final result = await ApiService.createPairingQr(deviceId);
@@ -416,7 +474,13 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
 
     if (result['status'] == true) {
-      final qrCode = (result['qrCode'] ?? result['pairingCode'] ?? result['code'] ?? 'PAIR-$deviceId').toString();
+      final rawQr = result['qrCode'] ?? result['pairingCode'] ?? result['code'];
+      if (rawQr == null || rawQr.toString().isEmpty) {
+        messenger.showSnackBar(const SnackBar(content: Text('Backend không trả về mã QR hợp lệ')));
+        return;
+      }
+
+      final qrCode = rawQr.toString();
       showDialog(
         context: context,
         builder: (_) => AlertDialog(
@@ -461,7 +525,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // Xem Lịch sử Vị trí GPS của Trẻ
+  // Xem Lịch sử Vị trí GPS của Trẻ đọc đúng recordedAt
   Future<void> _showDeviceLocationsDialog(int deviceId) async {
     final messenger = ScaffoldMessenger.of(context);
     final res = await ApiService.getDeviceLocations(deviceId);
@@ -482,10 +546,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     itemCount: list.length,
                     itemBuilder: (ctx, idx) {
                       final item = list[idx];
+                      final timeStr = (item['recordedAt'] ?? item['timestamp'] ?? item['createdAt'] ?? 'Mới đây').toString();
                       return ListTile(
                         leading: const Icon(Icons.location_on, color: Colors.blue),
                         title: Text('Vĩ độ: ${item['latitude']} | Kinh độ: ${item['longitude']}'),
-                        subtitle: Text('Thời gian: ${item['timestamp'] ?? item['createdAt'] ?? 'Mới đây'}'),
+                        subtitle: Text('Thời gian: $timeStr'),
                       );
                     },
                   )
@@ -520,10 +585,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     itemCount: list.length,
                     itemBuilder: (ctx, idx) {
                       final item = list[idx];
+                      final timeStr = (item['recordedAt'] ?? item['timestamp'] ?? item['createdAt'] ?? 'Mới đây').toString();
                       return ListTile(
                         leading: const Icon(Icons.warning, color: Colors.red),
                         title: Text((item['alertMessage'] ?? item['message'] ?? 'Cảnh báo').toString()),
-                        subtitle: Text('Thời gian: ${item['timestamp'] ?? item['createdAt'] ?? 'Mới đây'}'),
+                        subtitle: Text('Thời gian: $timeStr'),
                       );
                     },
                   )
@@ -754,7 +820,10 @@ class _HomeScreenState extends State<HomeScreen> {
           else
             ..._parentChildDevices.map((device) {
               final deviceMap = device is Map<String, dynamic> ? device : Map<String, dynamic>.from(device as Map);
-              final deviceId = deviceMap['id'] ?? deviceMap['deviceId'] ?? 1;
+              final dynamic rawId = deviceMap['id'] ?? deviceMap['deviceId'];
+              if (rawId == null) return const SizedBox.shrink();
+              final int deviceId = rawId is int ? rawId : int.parse(rawId.toString());
+
               final childName = deviceMap['childName'] ?? deviceMap['name'] ?? 'Thiết bị trẻ #$deviceId';
               final deviceName = deviceMap['deviceName'] ?? 'Thiết bị #$deviceId';
 
@@ -772,9 +841,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         trailing: PopupMenuButton<String>(
                           onSelected: (val) {
                             if (val == 'edit') _handleEditChildDevice(deviceMap);
-                            if (val == 'delete') _handleDeleteChildDevice(deviceId as int, childName.toString());
-                            if (val == 'locations') _showDeviceLocationsDialog(deviceId as int);
-                            if (val == 'alerts') _showDeviceAlertsDialog(deviceId as int);
+                            if (val == 'delete') _handleDeleteChildDevice(deviceId, childName.toString());
+                            if (val == 'locations') _showDeviceLocationsDialog(deviceId);
+                            if (val == 'alerts') _showDeviceAlertsDialog(deviceId);
                           },
                           itemBuilder: (ctx) => [
                             const PopupMenuItem(value: 'edit', child: Text('Chỉnh sửa')),
@@ -789,17 +858,17 @@ class _HomeScreenState extends State<HomeScreen> {
                         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                         children: [
                           ElevatedButton.icon(
-                            onPressed: () => _handleCreatePairingQr(deviceId as int),
+                            onPressed: () => _handleCreatePairingQr(deviceId),
                             icon: const Icon(Icons.qr_code, size: 18),
-                            label: const Text('Tạo QR Ghép Đôi'),
+                            label: const Text('Tạo QR'),
                           ),
                           OutlinedButton.icon(
-                            onPressed: () => ApiService.lockDevice(deviceId as int),
+                            onPressed: () => _handleLockDevice(deviceId),
                             icon: const Icon(Icons.lock, size: 18),
-                            label: const Text('Khóa Máy'),
+                            label: const Text('Khóa'),
                           ),
                           OutlinedButton.icon(
-                            onPressed: () => ApiService.unlockDevice(deviceId as int),
+                            onPressed: () => _handleUnlockDevice(deviceId),
                             icon: const Icon(Icons.lock_open, size: 18),
                             label: const Text('Mở Khóa'),
                           ),
@@ -933,7 +1002,13 @@ class _HomeScreenState extends State<HomeScreen> {
               activeThumbColor: Colors.red,
               onChanged: (val) {
                 setState(() => _isSosActive = val);
-                _syncChildTelemetry();
+                if (_lat == null || _lng == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Đang bật SOS. Đang chờ tọa độ GPS...')),
+                  );
+                } else {
+                  _syncChildTelemetry();
+                }
               },
             ),
           ),
